@@ -24,6 +24,17 @@ browser. **Phase 2 of 6** adds authentication and roles on top of phase 1.
 go mod tidy
 ```
 
+## Secret scanning (recommended)
+
+Local pre-commit hook (blocks accidental secrets):
+
+```
+pip install pre-commit
+pre-commit install
+```
+
+CI secret scan runs on every push and pull request.
+
 ## Run it
 
 ```

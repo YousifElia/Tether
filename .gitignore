@@ -2,3 +2,15 @@
 /myterm
 /myterm.exe
 *.exe
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.jks
+*.pkcs12
+*id_rsa*
+/secrets/
+/private/
