@@ -1,27 +1,26 @@
-# myterm — phase 3
+# myterm — phase 4
 
 A web terminal: run it on your machine, sign in, and drive a shell from any
-browser. **Phase 3 of 6** makes the shared session robust for reconnects and
-multiple viewers.
+browser. **Phase 4 of 6** adds a public HTTPS URL so you can reach it from
+anywhere — not just your local network.
 
 ## What works now
 
+- **Public URL via Cloudflare tunnel** — one flag spins up a `cloudflared` quick
+  tunnel and prints an `https://….trycloudflare.com` link (no account, no port
+  forwarding), plus a **QR code** you can scan with your phone or iPad camera.
+  The tunnel auto-reconnects if it drops, and is shut down cleanly on exit.
 - **Sign-in gate** — every page and the websocket require a valid token
 - **Two roles** — **owner** (read/write) and **spectator** (read-only; off by default)
-- **One shared session** — the owner drives a single shell; spectators watch the
-  *same* terminal
-- **Scrollback replay** — anyone who attaches is replayed recent output, so:
-  - a spectator who joins mid-session sees what's already on screen
-  - the owner who reconnects (e.g. iPad wifi blip) lands back on the live screen
-    instead of a blank one
-- **Size sync** — spectators mirror the owner's exact terminal dimensions, so the
-  shared view lines up
+- **One shared session** with **scrollback replay** (joiners/reconnects see recent
+  history) and **size sync** (spectators mirror the owner's dimensions)
 - Cross-platform PTY (ConPTY on Windows, Unix PTY elsewhere) and live resize
 
 ## Prerequisites
 
 - Go 1.22 or newer — https://go.dev/dl/
-- Internet on first page load (xterm.js is pulled from a CDN; phase 5 bundles it)
+- For the tunnel: `cloudflared` (auto-detected, or let myterm download it)
+- Internet on first page load (xterm.js is from a CDN; phase 5 bundles it)
 
 ## Secret scanning (recommended)
 
@@ -34,87 +33,110 @@ pre-commit install
 
 CI secret scan runs on every push and pull request.
 
-## Setup & run
+## Setup & run (local)
 
 ```
 go mod tidy
 go run ./cmd/myterm
 ```
 
-On startup it prints a sign-in box:
+Open the printed `http://127.0.0.1:7314`, paste the **owner** token, and you're in.
+
+## Go public (reach it from your iPad anywhere)
 
 ```
-----------------------------------------------------------------
-  open   http://127.0.0.1:7314   and paste a token to sign in:
-
-    owner  (read / write):  k3Jq...   (auto-generated; set MYTERM_OWNER_TOKEN for a stable token)
-    spectator (read-only):  disabled  (use --allow-spectators)
-----------------------------------------------------------------
+go run ./cmd/myterm --tunnel
 ```
 
-Open the URL, paste the **owner** token on the sign-in page, and you're in.
-
-## Stable tokens (recommended for daily use)
-
-Auto-generated tokens change on every restart. Set your own with environment
-variables (they don't show up in the process list the way flags do):
-
-```powershell
-$env:MYTERM_OWNER_TOKEN = "pick-a-long-random-string"
-.\myterm.exe
-```
+After a few seconds you'll see:
 
 ```
-export MYTERM_OWNER_TOKEN=pick-a-long-random-string
-./myterm
+================================================================
+  PUBLIC URL (reachable from anywhere - sign in with your token):
+
+    https://calm-river-1234.trycloudflare.com
+
+    <a scannable QR code of that URL>
+
+  scan the QR with your phone or iPad camera to open it
+================================================================
 ```
 
-## Sharing read-only access (spectators)
+Scan the QR on your iPad, paste the owner token, and you have your terminal from
+anywhere. Run `claude` in it and you're coding on the iPad against your desktop.
 
-Spectators are **off by default**. Enable with `--allow-spectators`:
+### Getting cloudflared
+
+myterm looks for `cloudflared` on your PATH and in common install locations. If
+it isn't installed:
 
 ```
-myterm.exe --allow-spectators
+# Windows
+winget install --id Cloudflare.cloudflared
+# macOS
+brew install cloudflared
 ```
 
-This prints a separate spectator token; anyone who signs in with it sees your
-live terminal but cannot type. Keep the owner token private; share only the
-spectator token. Set a stable one via `MYTERM_SPECTATOR_TOKEN`/`--spectator-token`.
+Or let myterm fetch the official binary for you (cached for next time):
+
+```
+go run ./cmd/myterm --tunnel --install-cloudflared
+```
+
+Point at a specific binary with `--cloudflared C:\path\to\cloudflared.exe`.
 
 ## Flags
 
-| Flag                 | Default               | Description                                  |
-|----------------------|-----------------------|----------------------------------------------|
-| `-addr`              | `127.0.0.1:7314`      | Address to listen on (`host:port`)           |
-| `-shell`             | `powershell.exe` / `$SHELL` / `bash` | Shell to launch               |
-| `-owner-token`       | env or auto-generated | Owner (read/write) token                     |
-| `-allow-spectators`  | `false`               | Enable read-only spectator access            |
-| `-spectator-token`   | env or auto-generated | Spectator token (only if spectators enabled) |
-| `-scrollback-kb`     | `256`                 | KB of recent output replayed to (re)joiners  |
+| Flag                   | Default               | Description                                       |
+|------------------------|-----------------------|---------------------------------------------------|
+| `-addr`                | `127.0.0.1:7314`      | Address to listen on (`host:port`)                |
+| `-shell`               | `powershell.exe` / `$SHELL` / `bash` | Shell to launch                    |
+| `-owner-token`         | env or auto-generated | Owner (read/write) token                          |
+| `-allow-spectators`    | `false`               | Enable read-only spectator access                 |
+| `-spectator-token`     | env or auto-generated | Spectator token (only if spectators enabled)      |
+| `-scrollback-kb`       | `256`                 | KB of recent output replayed to (re)joiners       |
+| `-tunnel`              | `false`               | Expose a public HTTPS URL via a cloudflared tunnel|
+| `-cloudflared`         | auto-detected         | Path to the cloudflared binary                    |
+| `-install-cloudflared` | `false`               | Download cloudflared automatically if not found   |
+| `-qr`                  | `true`                | Print a QR code for the public URL                |
 
 Environment equivalents: `MYTERM_OWNER_TOKEN`, `MYTERM_SPECTATOR_TOKEN`.
 Sign out anytime by visiting `/logout`.
 
-## How it works
+## Security when public
 
-- **Auth** — the token lives in a `SameSite=Strict`, `HttpOnly` cookie, which is
-  what blocks cross-site WebSocket hijacking; `Secure` is set automatically over
-  HTTPS (honoring `X-Forwarded-Proto`); tokens are compared in constant time.
-- **Frames** — the server multiplexes one channel per viewer: binary frames carry
-  shell bytes; text frames carry JSON control messages (`role`, `size`). A single
-  writer goroutine per connection preserves ordering.
-- **Scrollback** — the session keeps a bounded ring of recent raw output
-  (`-scrollback-kb`) and replays a snapshot to each viewer on attach.
+When you use `--tunnel`, your terminal is reachable from the public internet, so:
+
+- **The token is the only thing protecting it.** Set a long, stable owner token
+  (`MYTERM_OWNER_TOKEN`) before going public — don't rely on the random URL being
+  secret (it appears in logs and isn't a credential).
+- **Don't enable `--allow-spectators` on a public tunnel** unless you intend for
+  others to watch; share only the spectator token, never the owner token.
+- Auth rides a `SameSite=Strict`, `HttpOnly` cookie and the `Secure` flag is set
+  automatically over the HTTPS tunnel (via `X-Forwarded-Proto`), which is what
+  blocks cross-site WebSocket hijacking.
+- Quit with Ctrl+C — myterm kills the shell and the tunnel before exiting.
+
+## Notes & limits
+
+- **Quick-tunnel URLs are temporary.** Each run (and each auto-reconnect) gets a
+  new random hostname, and because the auth cookie is bound to the hostname, a
+  changed URL means signing in again. For a permanent URL, use a named Cloudflare
+  tunnel with an account (not built in yet).
+- Scrollback is replayed as raw bytes; a full-screen TUI may need one keypress to
+  repaint after a reconnect. The QR is most reliable on a dark terminal; the URL
+  is always printed too (`-qr=false` to hide it).
 
 ## Project layout
 
 ```
 my-term/
-├── cmd/myterm/main.go        flags, token setup, graceful shutdown
+├── cmd/myterm/main.go        flags, tunnel wiring, ordered shutdown
 ├── pkg/
 │   ├── auth/auth.go          tokens, roles, cookie/role resolution
 │   ├── session/session.go    shared shell, scrollback, output broadcast
 │   ├── pty/                  ConPTY (Windows) / Unix PTY behind one interface
+│   ├── tunnel/               cloudflared supervisor: spawn, parse URL, restart, install
 │   └── server/
 │       ├── server.go         routes, auth middleware, /ws bridge
 │       ├── login.go          sign-in page
@@ -124,14 +146,5 @@ my-term/
 └── Makefile
 ```
 
-## Notes & limits
-
-- Scrollback is replayed as raw bytes. For a full-screen TUI (vim, the Claude
-  Code UI) the very first repaint after a reconnect may look slightly off until
-  the app redraws on the next keypress/resize; a plain shell replays cleanly.
-- A spectator mirrors the owner's exact size, so on a small screen a wide session
-  may overflow — zoom out in the browser to see it all.
-
-Next: the Cloudflare tunnel for access from anywhere (phase 4), the real
-mobile-optimized UI with xterm.js bundled offline (phase 5), and file upload /
-download (phase 6).
+Next: a real mobile-optimized UI with xterm.js bundled offline (phase 5), then
+file upload / download (phase 6).

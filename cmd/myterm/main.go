@@ -1,5 +1,6 @@
 // Command myterm serves a shell as an authenticated web terminal over WebSocket,
-// with an owner (read/write) role and an optional read-only spectator role.
+// with an owner (read/write) role and an optional read-only spectator role, and
+// can expose itself on a public HTTPS URL via a cloudflared quick tunnel.
 package main
 
 import (
@@ -14,9 +15,12 @@ import (
 	"strings"
 	"time"
 
+	qrcode "github.com/skip2/go-qrcode"
+
 	"myterm/pkg/auth"
 	"myterm/pkg/server"
 	"myterm/pkg/session"
+	"myterm/pkg/tunnel"
 )
 
 func defaultShell() string {
@@ -36,6 +40,10 @@ func main() {
 	allowSpectators := flag.Bool("allow-spectators", false, "enable read-only spectator access")
 	spectatorFlag := flag.String("spectator-token", "", "spectator token; or env MYTERM_SPECTATOR_TOKEN; auto-generated if --allow-spectators and unset")
 	scrollbackKB := flag.Int("scrollback-kb", 256, "kilobytes of recent output retained for replay to (re)joining viewers")
+	tunnelOn := flag.Bool("tunnel", false, "expose a public HTTPS URL via a cloudflared quick tunnel")
+	cfPath := flag.String("cloudflared", "", "path to the cloudflared binary (auto-detected if empty)")
+	installCf := flag.Bool("install-cloudflared", false, "download cloudflared automatically if it isn't found")
+	showQR := flag.Bool("qr", true, "print a QR code for the public tunnel URL")
 	flag.Parse()
 
 	ownerToken := firstNonEmpty(*ownerFlag, os.Getenv("MYTERM_OWNER_TOKEN"))
@@ -55,28 +63,121 @@ func main() {
 	authr := auth.New(ownerToken, spectatorToken)
 	sess := session.New(*shell, nil, *scrollbackKB*1024)
 	srv := server.New(server.Config{Auth: authr, Session: sess})
-
 	httpSrv := &http.Server{Addr: *addr, Handler: srv.Routes()}
 
-	// Kill the shell and shut down cleanly on Ctrl+C.
-	go func() {
-		sigs := make(chan os.Signal, 1)
-		signal.Notify(sigs, os.Interrupt)
-		<-sigs
-		log.Println("shutting down")
-		sess.Close()
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = httpSrv.Shutdown(ctx)
-	}()
+	// ctx is cancelled on Ctrl+C; it also stops the tunnel.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 
 	log.Printf("web terminal listening on http://%s", *addr)
 	log.Printf("shell: %s", *shell)
 	printBanner(*addr, ownerToken, spectatorToken, autoOwner, *allowSpectators)
 
-	if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("server error: %v", err)
+	// The tunnel goroutine (if any) closes tunnelDone when it has fully stopped,
+	// i.e. after cloudflared has been killed and reaped. Shutdown waits on it so
+	// we never exit leaving an orphaned cloudflared process behind.
+	tunnelDone := make(chan struct{})
+	if *tunnelOn {
+		startTunnel(ctx, *addr, *cfPath, *installCf, *showQR, tunnelDone)
+	} else {
+		close(tunnelDone)
 	}
+
+	serverErr := make(chan error, 1)
+	go func() {
+		err := httpSrv.ListenAndServe()
+		if err == http.ErrServerClosed {
+			err = nil
+		}
+		serverErr <- err
+	}()
+
+	select {
+	case <-ctx.Done():
+		log.Println("shutting down")
+	case err := <-serverErr:
+		if err != nil {
+			log.Printf("server error: %v", err)
+		}
+		stop()
+	}
+
+	// Ordered teardown: kill the shell, stop accepting HTTP, then make sure the
+	// tunnel child is gone before the process exits.
+	sess.Close()
+	shutCtx, shutCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	_ = httpSrv.Shutdown(shutCtx)
+	shutCancel()
+
+	select {
+	case <-tunnelDone:
+	case <-time.After(3 * time.Second):
+		log.Println("tunnel did not stop in time")
+	}
+}
+
+func startTunnel(ctx context.Context, addr, cfPath string, install, qr bool, done chan struct{}) {
+	bin, err := tunnel.Find(cfPath)
+	if err != nil && install {
+		log.Printf("cloudflared not found; downloading the official binary...")
+		if bin, err = tunnel.Install(tunnel.DefaultInstallDir()); err == nil {
+			log.Printf("cloudflared installed at %s", bin)
+		}
+	}
+	if err != nil {
+		printCloudflaredHelp(err)
+		close(done) // nothing to wait for
+		return
+	}
+	mgr := tunnel.New(bin, tunnel.Target(addr), func(u string) { printPublicURL(u, qr) }, log.Printf)
+	go func() {
+		mgr.Run(ctx)
+		close(done)
+	}()
+	log.Printf("starting cloudflared tunnel (a public URL will appear in a few seconds)")
+}
+
+func printPublicURL(u string, qr bool) {
+	line := strings.Repeat("=", 64)
+	var b strings.Builder
+	b.WriteString("\n" + line + "\n")
+	b.WriteString("  PUBLIC URL (reachable from anywhere - sign in with your token):\n\n")
+	b.WriteString("    " + u + "\n")
+	if qr {
+		if code, err := qrcode.New(u, qrcode.Medium); err == nil {
+			code.DisableBorder = false
+			b.WriteString("\n" + indent(code.ToSmallString(false), "    ") + "\n")
+			b.WriteString("  scan the QR with your phone or iPad camera to open it\n")
+		}
+	}
+	b.WriteString(line + "\n")
+	fmt.Fprint(os.Stderr, b.String())
+}
+
+func indent(s, pad string) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	for i := range lines {
+		lines[i] = pad + lines[i]
+	}
+	return strings.Join(lines, "\n")
+}
+
+func printCloudflaredHelp(err error) {
+	log.Printf("tunnel unavailable: %v", err)
+	var b strings.Builder
+	b.WriteString("\nTo expose a public URL, install cloudflared and re-run with --tunnel:\n")
+	switch runtime.GOOS {
+	case "windows":
+		b.WriteString("  winget install --id Cloudflare.cloudflared\n")
+		b.WriteString("  (or:  choco install cloudflared)\n")
+	case "darwin":
+		b.WriteString("  brew install cloudflared\n")
+	default:
+		b.WriteString("  https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/\n")
+	}
+	b.WriteString("Or let myterm fetch it for you:  --tunnel --install-cloudflared\n")
+	b.WriteString("The terminal is still available locally at the address above.\n")
+	fmt.Fprint(os.Stderr, b.String())
 }
 
 func firstNonEmpty(a, b string) string {
