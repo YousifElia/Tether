@@ -39,12 +39,12 @@ var upgrader = websocket.Upgrader{
 	// Cross-site WebSocket hijacking is prevented by the SameSite=Strict session
 	// cookie: a cross-site page cannot attach the cookie to its handshake, so the
 	// auth check in handleWS rejects it. Returning true here keeps the upgrade
-	// working through tunnels/proxies that rewrite the Host header (e.g. Phase 4).
+	// working through tunnels/proxies that rewrite the Host header (Phase 4).
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-// control is a JSON message exchanged over the websocket as a TEXT frame.
-// Keystrokes and shell output use BINARY frames instead.
+// control is an inbound JSON message (TEXT frame) from the browser. Keystrokes
+// arrive as BINARY frames instead.
 type control struct {
 	Type string `json:"type"`
 	Cols int    `json:"cols"`
@@ -142,7 +142,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// This goroutine is the ONLY writer on conn (gorilla allows one concurrent
-	// writer). It announces the role, then streams session output.
+	// writer). It announces the role, then streams session frames.
 	go func() {
 		rm, _ := json.Marshal(map[string]string{"type": "role", "role": role.String()})
 		_ = conn.WriteMessage(websocket.TextMessage, rm)
@@ -150,8 +150,12 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			_ = conn.WriteMessage(websocket.TextMessage,
 				[]byte("\r\n\x1b[90m[waiting for the owner to start a session]\x1b[0m\r\n"))
 		}
-		for chunk := range out {
-			if werr := conn.WriteMessage(websocket.BinaryMessage, chunk); werr != nil {
+		for f := range out {
+			mt := websocket.BinaryMessage
+			if f.Text {
+				mt = websocket.TextMessage
+			}
+			if werr := conn.WriteMessage(mt, f.Data); werr != nil {
 				return
 			}
 		}

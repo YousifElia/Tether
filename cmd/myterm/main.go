@@ -35,6 +35,7 @@ func main() {
 	ownerFlag := flag.String("owner-token", "", "owner (read/write) token; or env MYTERM_OWNER_TOKEN; auto-generated if unset")
 	allowSpectators := flag.Bool("allow-spectators", false, "enable read-only spectator access")
 	spectatorFlag := flag.String("spectator-token", "", "spectator token; or env MYTERM_SPECTATOR_TOKEN; auto-generated if --allow-spectators and unset")
+	scrollbackKB := flag.Int("scrollback-kb", 256, "kilobytes of recent output retained for replay to (re)joining viewers")
 	flag.Parse()
 
 	ownerToken := firstNonEmpty(*ownerFlag, os.Getenv("MYTERM_OWNER_TOKEN"))
@@ -52,7 +53,7 @@ func main() {
 	}
 
 	authr := auth.New(ownerToken, spectatorToken)
-	sess := session.New(*shell, nil)
+	sess := session.New(*shell, nil, *scrollbackKB*1024)
 	srv := server.New(server.Config{Auth: authr, Session: sess})
 
 	httpSrv := &http.Server{Addr: *addr, Handler: srv.Routes()}

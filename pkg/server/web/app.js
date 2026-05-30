@@ -1,14 +1,17 @@
-// Phase 2 client. Connects to /ws, renders the shared shell with xterm.js, and
-// respects the role announced by the server.
+// Phase 3 client. Connects to /ws, renders the shared shell with xterm.js,
+// respects the announced role, and (for spectators) mirrors the owner's exact
+// terminal size so replayed scrollback and live output line up.
 //
 // Protocol
 //   browser -> server : keystrokes as BINARY; resize as TEXT {"type":"resize",...}
 //   server -> browser : shell output as BINARY; control/status as TEXT
-//                       (role announce: {"type":"role","role":"owner|spectator"})
+//                       role:  {"type":"role","role":"owner|spectator"}
+//                       size:  {"type":"size","cols":N,"rows":N}
 const term = new Terminal({
   cursorBlink: true,
   fontFamily: 'Menlo, Consolas, "DejaVu Sans Mono", monospace',
   fontSize: 14,
+  scrollback: 5000,
   theme: { background: '#0b0b0e' },
 });
 const fitAddon = new FitAddon.FitAddon();
@@ -35,6 +38,9 @@ ws.onmessage = (ev) => {
         readOnly = msg.role !== 'owner';
         applyRole();
         handled = true;
+      } else if (msg && msg.type === 'size') {
+        applySize(msg.cols, msg.rows);
+        handled = true;
       }
     } catch (_) { /* not JSON: fall through to status text */ }
     if (!handled) term.write(ev.data);
@@ -52,7 +58,8 @@ term.onData((data) => {
   if (ws.readyState === WebSocket.OPEN) ws.send(enc.encode(data));
 });
 
-// Only the owner controls the shared shell's size.
+// Only the owner controls the shared shell's size; the owner's window fit is the
+// source of truth. Spectators are sized by the server's size messages instead.
 function sendResize() {
   if (readOnly) return;
   if (ws.readyState === WebSocket.OPEN) {
@@ -60,7 +67,13 @@ function sendResize() {
   }
 }
 term.onResize(sendResize);
-window.addEventListener('resize', () => fitAddon.fit());
+window.addEventListener('resize', () => { if (!readOnly) fitAddon.fit(); });
+
+// Spectators mirror the owner's exact dimensions so the shared screen aligns.
+function applySize(cols, rows) {
+  if (!readOnly) return;
+  if (cols > 0 && rows > 0) term.resize(cols, rows);
+}
 
 function applyRole() {
   const badge = document.getElementById('ro-badge');
@@ -69,5 +82,7 @@ function applyRole() {
     term.options.cursorBlink = false;
   } else {
     badge.hidden = true;
+    fitAddon.fit(); // owner: size to our own window
+    sendResize();
   }
 }
