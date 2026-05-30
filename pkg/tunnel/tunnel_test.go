@@ -9,15 +9,22 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
-func writeScript(t *testing.T, body string) string {
+func writeScript(t *testing.T, unixBody, windowsBody string) string {
 	t.Helper()
-	p := filepath.Join(t.TempDir(), "fakecf.sh")
+	ext := ".sh"
+	body := unixBody
+	if runtime.GOOS == "windows" {
+		ext = ".cmd"
+		body = windowsBody
+	}
+	p := filepath.Join(t.TempDir(), "fakecf"+ext)
 	if err := os.WriteFile(p, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -45,9 +52,16 @@ func TestFindExplicitMissing(t *testing.T) {
 }
 
 func TestManagerParsesURLAndRestarts(t *testing.T) {
-	fake := writeScript(t, "#!/bin/sh\n"+
-		"echo 'INF |  https://unit-test-xyz.trycloudflare.com  |' 1>&2\n"+
-		"sleep 1\nexit 1\n")
+	fake := writeScript(
+		t,
+		"#!/bin/sh\n"+
+			"echo 'INF |  https://unit-test-xyz.trycloudflare.com  |' 1>&2\n"+
+			"sleep 1\nexit 1\n",
+		"@echo off\r\n"+
+			"echo INF ^|  https://unit-test-xyz.trycloudflare.com  ^| 1>&2\r\n"+
+			"timeout /t 1 /nobreak >NUL\r\n"+
+			"exit /b 1\r\n",
+	)
 
 	var calls atomic.Int64
 	var last atomic.Value
@@ -77,7 +91,11 @@ func TestManagerParsesURLAndRestarts(t *testing.T) {
 }
 
 func TestRunOnceReportsOutputWhenNoURL(t *testing.T) {
-	fake := writeScript(t, "#!/bin/sh\necho 'ERR boom went the tunnel' 1>&2\nexit 7\n")
+	fake := writeScript(
+		t,
+		"#!/bin/sh\necho 'ERR boom went the tunnel' 1>&2\nexit 7\n",
+		"@echo off\r\necho ERR boom went the tunnel 1>&2\r\nexit /b 7\r\n",
+	)
 	m := New(fake, "http://127.0.0.1:9", nil, nil)
 	err := m.runOnce(context.Background())
 	if err == nil {
@@ -106,8 +124,10 @@ func TestDownloadDirect(t *testing.T) {
 	if !bytes.Equal(got, want) {
 		t.Fatal("downloaded content mismatch")
 	}
-	if fi, _ := os.Stat(dst); fi.Mode().Perm()&0o100 == 0 {
-		t.Errorf("expected executable bit, got %v", fi.Mode())
+	if runtime.GOOS != "windows" {
+		if fi, _ := os.Stat(dst); fi.Mode().Perm()&0o100 == 0 {
+			t.Errorf("expected executable bit, got %v", fi.Mode())
+		}
 	}
 }
 
