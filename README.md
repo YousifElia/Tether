@@ -1,4 +1,4 @@
-# myterm — phase 4
+# tether — phase 4
 
 A web terminal: run it on your machine, sign in, and drive a shell from any
 browser. **Phase 4 of 6** adds a public HTTPS URL so you can reach it from
