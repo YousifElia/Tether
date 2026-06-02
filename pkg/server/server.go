@@ -13,6 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"myterm/pkg/auth"
+	"myterm/pkg/files"
 	"myterm/pkg/session"
 )
 
@@ -20,17 +21,22 @@ import (
 type Config struct {
 	Auth    *auth.Authenticator
 	Session *session.Session
+	// Files enables the file-transfer routes when non-nil. When nil, the
+	// /api/files, /api/upload, /api/download/ and /api/delete/ routes are not
+	// registered and the feature is invisible to clients.
+	Files *files.Manager
 }
 
 // Server serves the UI, login flow, and terminal websocket.
 type Server struct {
-	auth *auth.Authenticator
-	sess *session.Session
+	auth  *auth.Authenticator
+	sess  *session.Session
+	files *files.Manager
 }
 
 // New returns a Server built from cfg.
 func New(cfg Config) *Server {
-	return &Server{auth: cfg.Auth, sess: cfg.Session}
+	return &Server{auth: cfg.Auth, sess: cfg.Session, files: cfg.Files}
 }
 
 var upgrader = websocket.Upgrader{
@@ -57,6 +63,16 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/login", s.handleLogin)
 	mux.HandleFunc("/logout", s.handleLogout)
 	mux.HandleFunc("/ws", s.handleWS)
+	if s.files != nil {
+		// File transfer (Phase 6). These endpoints check auth inline, the same
+		// way handleWS does, rather than going through requireAuth — that
+		// middleware redirects unauthenticated requests to /login, which is
+		// wrong for fetch() callers that expect a JSON status instead.
+		mux.HandleFunc("/api/files", s.handleListFiles)
+		mux.HandleFunc("/api/upload", s.handleUpload)
+		mux.HandleFunc("/api/download/", s.handleDownload)
+		mux.HandleFunc("/api/delete/", s.handleDelete)
+	}
 	mux.Handle("/", s.requireAuth(http.FileServer(http.FS(staticFS()))))
 	return mux
 }

@@ -8,8 +8,35 @@
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<div id="ro-badge" hidden>read-only</div>
+<div id="topbar">
+  <div id="ro-badge" hidden>read-only</div>
+  <button id="files-toggle" type="button" hidden aria-label="Toggle file panel" aria-expanded="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+    </svg>
+    <span>Files</span><span class="badge" id="files-count"></span>
+  </button>
+</div>
+
 <div id="terminal"></div>
+
+<button id="fp-backdrop" type="button" hidden aria-label="Close file panel"></button>
+<aside id="file-panel" hidden aria-label="Shared files">
+  <header>
+    <span class="fp-title">Shared files</span>
+    <button id="fp-close" type="button" aria-label="Close file panel">&times;</button>
+  </header>
+  <ul id="fp-list"></ul>
+  <div id="fp-empty" class="fp-empty" hidden>No files shared yet.</div>
+  <div id="fp-upload" hidden>
+    <label id="fp-drop">
+      <input type="file" id="fp-input" multiple hidden>
+      <span>Drop files here, or <u>tap to browse</u></span>
+    </label>
+  </div>
+  <div id="fp-status" aria-live="polite"></div>
+</aside>
+
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
 <script src="/app.js"></script>
