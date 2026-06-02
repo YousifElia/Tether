@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 	qrcode "github.com/skip2/go-qrcode"
 
 	"myterm/pkg/auth"
+	"myterm/pkg/files"
 	"myterm/pkg/server"
 	"myterm/pkg/session"
 	"myterm/pkg/tunnel"
@@ -44,6 +46,8 @@ func main() {
 	cfPath := flag.String("cloudflared", "", "path to the cloudflared binary (auto-detected if empty)")
 	installCf := flag.Bool("install-cloudflared", false, "download cloudflared automatically if it isn't found")
 	showQR := flag.Bool("qr", true, "print a QR code for the public tunnel URL")
+	shareDir := flag.String("share-dir", "", "directory to share for file upload/download (file transfer is disabled when empty)")
+	maxUploadMB := flag.Int("max-upload-mb", 100, "maximum size, in MB, of a single uploaded file")
 	flag.Parse()
 
 	ownerToken := firstNonEmpty(*ownerFlag, os.Getenv("MYTERM_OWNER_TOKEN"))
@@ -62,7 +66,10 @@ func main() {
 
 	authr := auth.New(ownerToken, spectatorToken)
 	sess := session.New(*shell, nil, *scrollbackKB*1024)
-	srv := server.New(server.Config{Auth: authr, Session: sess})
+
+	fileMgr := buildFileManager(*shareDir, *maxUploadMB)
+
+	srv := server.New(server.Config{Auth: authr, Session: sess, Files: fileMgr})
 	httpSrv := &http.Server{Addr: *addr, Handler: srv.Routes()}
 
 	// ctx is cancelled on Ctrl+C; it also stops the tunnel.
@@ -71,7 +78,7 @@ func main() {
 
 	log.Printf("web terminal listening on http://%s", *addr)
 	log.Printf("shell: %s", *shell)
-	printBanner(*addr, ownerToken, spectatorToken, autoOwner, *allowSpectators)
+	printBanner(*addr, ownerToken, spectatorToken, autoOwner, *allowSpectators, fileMgr)
 
 	// The tunnel goroutine (if any) closes tunnelDone when it has fully stopped,
 	// i.e. after cloudflared has been killed and reaped. Shutdown waits on it so
@@ -187,7 +194,7 @@ func firstNonEmpty(a, b string) string {
 	return b
 }
 
-func printBanner(addr, owner, spectator string, autoOwner, spectatorsOn bool) {
+func printBanner(addr, owner, spectator string, autoOwner, spectatorsOn bool, fm *files.Manager) {
 	line := strings.Repeat("-", 64)
 	fmt.Fprintln(os.Stderr, "\n"+line)
 	fmt.Fprintf(os.Stderr, "  open   http://%s   and paste a token to sign in:\n\n", addr)
@@ -201,5 +208,36 @@ func printBanner(addr, owner, spectator string, autoOwner, spectatorsOn bool) {
 	} else {
 		fmt.Fprintf(os.Stderr, "    spectator (read-only):  disabled  (use --allow-spectators)\n")
 	}
+	if fm != nil {
+		fmt.Fprintf(os.Stderr, "    file transfer:          on  -  sharing %s\n", fm.Dir())
+	} else {
+		fmt.Fprintf(os.Stderr, "    file transfer:          disabled  (use --share-dir DIR)\n")
+	}
 	fmt.Fprintln(os.Stderr, line+"\n")
+}
+
+// buildFileManager validates the --share-dir path and returns a files.Manager,
+// or nil when no directory was given. A bad path is fatal: the user explicitly
+// asked to share a directory, so silently disabling the feature would be worse
+// than failing loudly.
+func buildFileManager(shareDir string, maxUploadMB int) *files.Manager {
+	if shareDir == "" {
+		return nil
+	}
+	abs, err := filepath.Abs(shareDir)
+	if err != nil {
+		log.Fatalf("--share-dir %q: %v", shareDir, err)
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		log.Fatalf("--share-dir %q: %v", abs, err)
+	}
+	if !info.IsDir() {
+		log.Fatalf("--share-dir %q is not a directory", abs)
+	}
+	if maxUploadMB < 1 {
+		log.Fatalf("--max-upload-mb must be at least 1 (got %d)", maxUploadMB)
+	}
+	log.Printf("file transfer enabled: sharing %s (max upload %d MB)", abs, maxUploadMB)
+	return files.New(abs, int64(maxUploadMB)<<20)
 }
