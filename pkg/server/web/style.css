@@ -1,0 +1,197 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: #0b0b0e;
+}
+#terminal {
+  position: absolute;
+  inset: 0;
+  padding: 8px;
+  box-sizing: border-box;
+}
+.xterm { height: 100%; }
+
+/* Top-right toolbar holds the read-only badge and the file-panel toggle. */
+#topbar {
+  position: fixed;
+  top: 10px;
+  right: 12px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#ro-badge {
+  font: 600 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #ff7ad1;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(255, 122, 209, 0.5);
+  padding: 5px 9px;
+  border-radius: 6px;
+  letter-spacing: 0.04em;
+}
+
+#files-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 600 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #e6a23c;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(230, 162, 60, 0.5);
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  letter-spacing: 0.03em;
+}
+#files-toggle:hover { background: rgba(230, 162, 60, 0.14); border-color: rgba(230, 162, 60, 0.8); }
+#files-toggle svg { width: 14px; height: 14px; stroke: currentColor; fill: none; }
+#files-toggle .badge {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: #e6a23c;
+  color: #1a1300;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
+#files-toggle .badge:empty { display: none; }
+
+/* Backdrop dims the terminal on mobile when the panel is open. */
+#fp-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  background: rgba(0, 0, 0, 0.5);
+  border: 0;
+  padding: 0;
+}
+#fp-backdrop[hidden] { display: none; }
+
+/* The panel itself: a right-hand sidebar that overlays the terminal. */
+#file-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 30;
+  width: 340px;
+  max-width: 92vw;
+  height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  background: #15151b;
+  border-left: 1px solid #2a2a35;
+  color: #e6e6e6;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
+}
+#file-panel[hidden] { display: none; }
+
+#file-panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid #2a2a35;
+}
+.fp-title { font-size: 14px; font-weight: 600; color: #e6a23c; letter-spacing: 0.02em; }
+#fp-close {
+  background: transparent;
+  border: 0;
+  color: #9a9aa6;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+#fp-close:hover { color: #e6e6e6; background: #20202a; }
+
+#fp-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+}
+.fp-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+}
+.fp-row:hover { background: #1c1c24; }
+.fp-meta { flex: 1 1 auto; min-width: 0; }
+.fp-name {
+  display: block;
+  font-size: 13px;
+  color: #e6e6e6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: ui-monospace, Consolas, monospace;
+}
+.fp-sub { display: block; font-size: 11px; color: #74747f; margin-top: 2px; }
+.fp-act {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #9a9aa6;
+  cursor: pointer;
+  text-decoration: none;
+}
+.fp-act svg { width: 16px; height: 16px; stroke: currentColor; fill: none; }
+.fp-download:hover { color: #e6a23c; background: rgba(230, 162, 60, 0.12); }
+.fp-delete:hover { color: #ff6b6b; background: rgba(255, 107, 107, 0.12); }
+
+.fp-empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: #74747f;
+  font-size: 13px;
+  flex: 1 1 auto;
+}
+
+/* Owner-only upload affordance. */
+#fp-upload { padding: 12px 16px; border-top: 1px solid #2a2a35; }
+#fp-drop {
+  display: block;
+  padding: 18px 12px;
+  text-align: center;
+  border: 1.5px dashed #3a3a47;
+  border-radius: 10px;
+  color: #9a9aa6;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s, color 0.12s;
+}
+#fp-drop:hover { border-color: #e6a23c; color: #c9c9d2; }
+#fp-drop.dragover { border-color: #e6a23c; background: rgba(230, 162, 60, 0.1); color: #e6a23c; }
+#fp-drop u { color: #e6a23c; text-decoration: none; border-bottom: 1px solid currentColor; }
+
+#fp-status {
+  padding: 0 16px 14px;
+  font-size: 12px;
+  color: #74747f;
+  min-height: 14px;
+  word-break: break-word;
+}
+#fp-status.error { color: #ff9aa2; }
+#fp-status.ok { color: #8fce9b; }
+
+@media (max-width: 560px) {
+  #file-panel { width: 100%; max-width: 100%; border-left: 0; }
+}
